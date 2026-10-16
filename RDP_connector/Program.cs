@@ -409,15 +409,30 @@ internal class Program
         string username = AnsiConsole.Ask<string>("Введите [green]имя пользователя[/] (или [yellow]exit[/] для отмены):").Trim();
         if (username.Equals("exit", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(username))
             return;
-        Table? table = await GetComputersByUsername(username);
-        if (table != null)
-            AnsiConsole.Write(table);
-        else
+
+        List<ManagedComputer>? computers = await GetComputersByUsername(username);
+        if (computers == null)
+        {
             AnsiConsole.MarkupLine("Компьютеры с таким пользователем [yellow]не найдены[/].");
-        WaitForExit();
+            Thread.Sleep(1000);
+            return;
+        }
+        List<ManagedComputer> choices = [BackMarker, .. computers];
+
+        ManagedComputer selected = AnsiConsole.Prompt(new SelectionPrompt<ManagedComputer>().Title("Выберите компьютер из списка ([grey]начните вводить текст для поиска[/]):")
+                                                                                            .PageSize(15)
+                                                                                            .EnableSearch()
+                                                                                            .SearchPlaceholderText("[grey]Введите имя или описание для фильтрации...[/]")
+                                                                                            .UseConverter(c => c.Host == "BACK_MARKER" ? $"[yellow]<- Назад (Отмена)[/]" : c.ToString())
+                                                                                            .AddChoices(choices));
+
+        if (selected == BackMarker)
+            return;
+
+        await RunWorkflowAsync(selected.Host);
     }
 
-    private static async Task<Table?> GetComputersByUsername(string username)
+    private static async Task<List<ManagedComputer>?> GetComputersByUsername(string username)
     {
         return await Task.Run(() =>
         {
@@ -429,21 +444,20 @@ internal class Program
 
                 using PrincipalSearcher searcher = new(computerTemplate);
                 PrincipalSearchResult<Principal> results = searcher.FindAll();
-                bool found = false;
-
-                Table table = new Table().Border(TableBorder.Rounded);
-                table.AddColumn("[blue]Имя[/]");
-                table.AddColumn("[blue]Описание[/]");
+                List<ManagedComputer> computers = [];
 
                 foreach (ComputerPrincipal pc in results.Cast<ComputerPrincipal>())
                 {
-                    found = true;
-                    table.AddRow(pc.Name, pc.Description);
+                    computers.Add(new()
+                    {
+                        Host = pc.Name,
+                        Description = pc.Description
+                    });
                 }
 
-                if (!found)
+                if (computers.Count == 0)
                     return null;
-                return table;
+                return computers;
             }
             catch (Exception ex)
             {
